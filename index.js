@@ -3,47 +3,53 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 const bodyParser = require('body-parser');
-const validUrl = require('valid-url'); // External library to validate URLs
-
+const validUrl = require('valid-url');
+const urlparser =require('url');
+const dns = require('dns');
+const {MongoClient}= require('mongodb');
+const client = new MongoClient(process.env.MONGO_URI)
+const db = client.db("urlshortner")
+const urls = db.collection("urls")
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
+app.use(express.urlencoded({extended:true}))
 
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+app.get('/',function(req,res){
+  res.sendFile(process.cwd()+'/views/index.html')
+})
 
-const shortUrls = {};
-let shortUrlCounter = 1;
+app.post('/api/shorturl', function(req, res) {
+  
+  console.log(req.body)
+  const url = req.body.url
+  const dnslookup = dns.lookup(urlparser.parse(url).hostname, async (err, address) => {
+    if (!address){
+      res.json({error: "Invalid URL"})
+    } else {
 
-app.post('/api/shorturl', (req, res) => {
-  const originalUrl = req.body.url;
+      const urlCount = await urls.countDocuments({})
+      const urlDoc = {
+        url,
+        short_url: urlCount
+      }
 
-  // Validate the URL
-  if (!validUrl.isWebUri(originalUrl)) {
-    console.error(`Invalid URL: ${originalUrl}`);
-    return res.status(400).json({ error: 'invalid url' });
-  }
-
-  const shortUrl = shortUrlCounter++;
-  shortUrls[shortUrl] = originalUrl;
-
-  res.json({ original_url: originalUrl, short_url: shortUrl });
+      const result = await urls.insertOne(urlDoc)
+      console.log(result);
+      res.json({ original_url: url, short_url: urlCount })
+      
+    }
+  })
 });
 
-
-app.get('/api/shorturl/:short', (req, res) => {
-  const shortUrl = parseInt(req.params.short);
-  const originalUrl = shortUrls[shortUrl];
-
-  if (originalUrl) {
-    res.redirect(originalUrl);
-  } else {
-    res.status(404).json({ error: 'Short URL not found' });
-  }
-});
+app.get("/api/shorturl/:short_url", async (req, res) => {
+  const shorturl = req.params.short_url
+  const urlDoc = await urls.findOne({ short_url: +shorturl })
+  res.redirect(urlDoc.url)
+})
 
 app.listen(port, function() {
   console.log(`Listening on port ${port}`);
